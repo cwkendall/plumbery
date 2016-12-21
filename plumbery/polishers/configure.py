@@ -26,6 +26,9 @@ from plumbery.polishers.backup import BackupConfiguration
 from plumbery.polishers.windows import WindowsConfiguration
 from plumbery.plogging import plogging
 
+from plumbery.text import PlumberyContext
+from plumbery.text import PlumberyNodeContext
+
 
 class ConfigurePolisher(PlumberyPolisher):
     """
@@ -355,6 +358,15 @@ class ConfigurePolisher(PlumberyPolisher):
 
                 break
 
+        # hack because the driver does not report public ipv4 accurately
+        if len(node.public_ips) < 1:
+            domain = self.region.ex_get_network_domain(
+                node.extra['networkDomainId'])
+            for rule in self.region.ex_list_nat_rules(domain):
+                if rule.internal_ip in node.private_ips:
+                    node.public_ips.append(rule.external_ip)
+                    break
+
         candidates = self.container._list_candidate_firewall_rules(node, ports)
 
         for rule in self.container._list_firewall_rules():
@@ -414,10 +426,14 @@ class ConfigurePolisher(PlumberyPolisher):
             plogging.info("- not found")
             return
 
+        environment = PlumberyNodeContext(node=node,
+                                          container=container,
+                                          context=self.facility)
+
         try:
             cpu_prop = CpuConfiguration()
             cpu_prop.validate(settings)
-            cpu = cpu_prop.configure(node, settings)
+            cpu = cpu_prop.configure(node, settings, environment)
 
             ram_prop = MemoryConfiguration()
             ram_prop.validate(settings)
@@ -433,13 +449,18 @@ class ConfigurePolisher(PlumberyPolisher):
             else:
                 raise ce
 
+        if 'glue' in settings:
+            self.attach_node(node, settings['glue'])
+        elif 'pinch' in settings:
+            self.attach_node(node, settings['pinch'])
+
         for prop_cls in self.configuration_props:
 
             try:
                 configuration_prop = prop_cls(engine=container.facility.plumbery,
                                               facility=self.facility)
                 configuration_prop.validate(settings)
-                configuration_prop.configure(node, settings)
+                configuration_prop.configure(node, settings, environment)
 
             except ConfigurationError as ce:
                 if self.engine.safeMode:
@@ -447,7 +468,13 @@ class ConfigurePolisher(PlumberyPolisher):
                 else:
                     raise ce
 
+        # undo temporary nat rule for configure polisher
+        if 'pinch' in settings:
+            domain = self.container.get_network_domain(
+                node.extra['networkDomainId'])
+            for rule in self.region.ex_list_nat_rules(domain):
+                if rule.internal_ip in node.private_ips and rule.external_ip in node.public_ips:
+                    external_ip = rule.external_ip
+                    plogging.info("- removing node from firewall pinch at '{}'".format(external_ip))
+                    self.region.ex_delete_nat_rule(rule.id)
         container._add_to_pool(node)
-
-        if 'glue' in settings:
-            self.attach_node(node, settings['glue'])

@@ -26,6 +26,7 @@ from winrm.protocol import Protocol
 from plumbery.polishers.base import NodeConfiguration
 from plumbery.plogging import plogging
 
+from plumbery.text import PlumberyText
 
 class WindowsConfiguration(NodeConfiguration):
     __name__ = 'WindowsConfiguration'
@@ -39,8 +40,7 @@ class WindowsConfiguration(NodeConfiguration):
         self.username = 'administrator'
         plogging.debug('Loading windows polisher')
 
-    def _try_winrm(self, node):
-        ip = node.private_ips[0]
+    def _try_winrm(self, ip):
         p = Protocol(
                 endpoint='http://%s:5985/wsman' % ip,  # RFC 2732
                 transport='ntlm',
@@ -54,8 +54,7 @@ class WindowsConfiguration(NodeConfiguration):
         p.close_shell(shell_id)
         return std_out
 
-    def _winrm_commands(self, node, commands):
-        ip = node.private_ips[0]
+    def _winrm_commands(self, ip, commands):
         p = Protocol(
                 endpoint='http://%s:5985/wsman' % ip,  # RFC 2732
                 transport='ntlm',
@@ -77,14 +76,13 @@ class WindowsConfiguration(NodeConfiguration):
         p.close_shell(shell_id)
         return std_out_logs, std_err_logs
 
-    def _setup_winrm(self, node):
+    def _setup_winrm(self, ip):
         """
         Setup WinRM on a remote node
 
-        :param node: the node to be polished
-        :type node: :class:`libcloud.compute.base.Node`
+        :param ip: the address of node to be polished
+        :type string:
         """
-        ip = node.private_ips[0]
         plogging.debug("Testing out quick function on %s", ip)
         out = run_cmd(
             'echo hello',
@@ -109,14 +107,13 @@ class WindowsConfiguration(NodeConfiguration):
                 host=ip)
             plogging.info(out)
 
-    def _lockdown_winrm(self, node):
+    def _lockdown_winrm(self, ip):
         """
         Setup WinRM on a remote node
 
-        :param node: the node to be polished
-        :type node: :class:`libcloud.compute.base.Node`
+        :param ip: the address of node to be polished
+        :type string:
         """
-        ip = node.private_ips[0]
         plogging.debug("Running winexe to remotely deconfigure %s", ip)
         cmds = [
             "winrm set winrm/config/service/auth @{Basic=\"false\"}",
@@ -139,7 +136,7 @@ class WindowsConfiguration(NodeConfiguration):
         plogging.debug('Reap for windows polisher (noop)')
         return
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         """
         prepares a node
 
@@ -172,43 +169,47 @@ class WindowsConfiguration(NodeConfiguration):
                     plogging.info("- skipped - node is not running")
                     return
 
-            ipv6 = node.extra['ipv6']
-            ip = node.private_ips[0]
-            if ipv6 is None:
-                plogging.error('No ipv6 address for node, cannot configure')
-                return
+            if len(node['public_ips']) > 0:
+                host_address = node['public_ips'][0]
+            elif node['ipv6']:
+                host_address = node['ipv6']
+            else:
+                host_address = node['private_ips'][0]
 
             # Check to see if WinRM works..
             try:
-                self._try_winrm(node)
+                self._try_winrm(host_address)
             except winrm.exceptions.InvalidCredentialsError:
-                plogging.warn('initial login to %s failed, trying to setup winrm remotely',
+                plogging.warning('initial login to %s failed, trying to setup winrm remotely',
                              ip)
-                self._setup_winrm(node)
-                self._try_winrm(node)
+                self._setup_winrm(host_address)
+                self._try_winrm(host_address)
             except requests.exceptions.ConnectionError:
-                plogging.warn('initial connection to %s failed, trying to setup winrm remotely',
+                plogging.warning('initial connection to %s failed, trying to setup winrm remotely',
                              ip)
-                self._setup_winrm(node)
-                self._try_winrm(node)
+                self._setup_winrm(host_address)
+                self._try_winrm(host_address)
 
             # OK, we're all ready. Let's look at the node config and start commands
             cmds = []
             hostname = settings[self._element_name_].get('hostname', None)
+            hostname = PlumberyText.expand_string(hostname, environment)
+
             if hostname is not None and isinstance(hostname, str):
                 cmds.append(('powershell.exe', ['Rename-Computer', '-NewName', hostname]))
 
             extra_cmds = settings[self._element_name_].get('cmds', [])
             for command in extra_cmds:
+                command = PlumberyText.expand_string(command, environment)
                 command = command.rstrip()
                 command_parts = command.split(' ')
                 cmds.append((command_parts[0], command_parts[1:]))
 
-            out, err = self._winrm_commands(node, cmds)
+            out, err = self._winrm_commands(host_address, cmds)
             plogging.info(out)
             plogging.warning(err)
 
             plogging.debug('locking down winrm')
-            self._lockdown_winrm(node)
+            self._lockdown_winrm(host_address)
         else:
             return False

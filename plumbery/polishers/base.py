@@ -24,10 +24,10 @@ class NodeConfiguration(object):
     def __init__(self, engine=None, facility=None):
         pass
 
-    def validate(self, settings):
+    def validate(self, settings, environment=None):
         raise NotImplementedError()
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment=None):
         raise NotImplementedError()
 
     def deconfigure(self, node, settings):
