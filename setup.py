@@ -16,8 +16,10 @@ requirements = [
     'colorlog',
     'netifaces',
     'paramiko',
-    'pywinexe',
+    'cffi',
+#    'pywinexe',
     'pywinrm',
+    'impacket',
     'PyYAML',
     'requests',
     'requests_mock']

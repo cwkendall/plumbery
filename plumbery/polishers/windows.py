@@ -16,8 +16,7 @@
 import time
 import requests
 
-from pywinexe.api import cmd as run_cmd
-from pywinexe.api import ps as run_ps
+from plumbery.polishers.psexec import PSEXEC
 
 from libcloud.compute.types import NodeState
 import winrm
@@ -76,6 +75,13 @@ class WindowsConfiguration(NodeConfiguration):
         p.close_shell(shell_id)
         return std_out_logs, std_err_logs
 
+    def run_cmd(self, cmdstr, args, user, password, host):
+        psobj = PSEXEC(command='cmd.exe /c '+cmdstr, path=None, copyFile=None, exeFile=None, username=user, password=password)
+        #try:
+        psobj.run(host)
+        #except Exception, e:
+        #    plogging.error('Unable to bootstrap host %s', repr(e))
+
     def _setup_winrm(self, ip):
         """
         Setup WinRM on a remote node
@@ -84,7 +90,7 @@ class WindowsConfiguration(NodeConfiguration):
         :type string:
         """
         plogging.debug("Testing out quick function on %s", ip)
-        out = run_cmd(
+        out = self.run_cmd(
             'echo hello',
             args=[],
             user=self.username,
@@ -93,13 +99,18 @@ class WindowsConfiguration(NodeConfiguration):
         plogging.info(out)
         plogging.debug("Running winexe to remotely configure %s", ip)
         cmds = [
+            #"winrm create winrm/config/Listener?Address=*+Transport=HTTPS @{Hostname=\"blah.com\";CertificateThumbprint="XXXXXXX"}"
+            ## OR alt winrm quickconfig -transport:https
+            ## Win2012 enable SMB encryption and disable SMBv1
+            #Set-SmbServerConfiguration -EnableSMB1Protocol $false
+            #Set-SmbServerConfiguration -EncryptData $true
             "winrm quickconfig -quiet",
             "winrm set winrm/config/service/auth @{Basic=\"true\"}",
             "winrm set winrm/config/service @{AllowUnencrypted=\"true\"}"
         ]
         for cmd in cmds:
             plogging.debug('Running command "%s"', cmd)
-            out = run_cmd(
+            out = self.run_cmd(
                 cmd,
                 args=[],
                 user=self.username,
@@ -121,7 +132,7 @@ class WindowsConfiguration(NodeConfiguration):
         ]
         for cmd in cmds:
             plogging.debug('Running command "%s"', cmd)
-            out = run_cmd(
+            out = self.run_cmd(
                 cmd,
                 args=[],
                 user=self.username,
