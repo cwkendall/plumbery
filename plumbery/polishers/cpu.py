@@ -46,7 +46,7 @@ class CpuConfiguration(NodeConfiguration):
                     " or 'highspeed'")
             return True
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         if self._element_name_ in settings:
             tokens = str(settings[self._element_name_]).split(' ')
             if len(tokens) < 2:

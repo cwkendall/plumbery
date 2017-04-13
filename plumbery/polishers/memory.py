@@ -31,7 +31,7 @@ class MemoryConfiguration(NodeConfiguration):
             if memory < 1 or memory > 256:
                 raise ConfigurationError("- memory should be between 1 and 256")
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         if self._element_name_ in settings:
             memory = int(settings[self._element_name_])
             plogging.debug("- setting {} GB of memory".format(

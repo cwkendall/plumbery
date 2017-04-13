@@ -437,7 +437,7 @@ class ConfigurePolisher(PlumberyPolisher):
 
             ram_prop = MemoryConfiguration()
             ram_prop.validate(settings)
-            memory = ram_prop.configure(node, settings)
+            memory = ram_prop.configure(node, settings, environment)
 
             if memory is not False and cpu is not False:
                 self.set_node_compute(node, cpu, memory)

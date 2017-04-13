@@ -40,7 +40,7 @@ class BackupConfiguration(NodeConfiguration):
                 raise ConfigurationError("Backup plan not valid")
             return True
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         if self._element_name_ in settings:
             self._configure_backup(node, settings[self._element_name_])
             return True

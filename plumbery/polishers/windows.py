@@ -76,7 +76,7 @@ class WindowsConfiguration(NodeConfiguration):
         return std_out_logs, std_err_logs
 
     def run_cmd(self, cmdstr, args, user, password, host):
-        psobj = PSEXEC(command='cmd.exe /c '+cmdstr, path=None, copyFile=None, exeFile=None, username=user, password=password)
+        psobj = PSEXEC(command='cmd.exe /c '+cmdstr, path=None, exeFile=None, copyFile=None, protocols=None, username=user, password=password)
         #try:
         psobj.run(host)
         #except Exception, e:
@@ -180,24 +180,24 @@ class WindowsConfiguration(NodeConfiguration):
                     plogging.info("- skipped - node is not running")
                     return
 
-            if len(node['public_ips']) > 0:
-                host_address = node['public_ips'][0]
-            elif node['ipv6']:
-                host_address = node['ipv6']
+            if len(node.public_ips) > 0:
+                host_address = node.public_ips[0]
             else:
-                host_address = node['private_ips'][0]
+                host_address = node.private_ips[0]
 
             # Check to see if WinRM works..
             try:
                 self._try_winrm(host_address)
+            except winrm.exceptions.WinRMTransportError:
+                plogging.warning('transport failure to %s, trying to setup winrm remotely', host_address)
+                self._setup_winrm(host_address)
+                self._try_winrm(host_address)
             except winrm.exceptions.InvalidCredentialsError:
-                plogging.warning('initial login to %s failed, trying to setup winrm remotely',
-                             ip)
+                plogging.warning('initial login to %s failed, trying to setup winrm remotely', host_address)
                 self._setup_winrm(host_address)
                 self._try_winrm(host_address)
             except requests.exceptions.ConnectionError:
-                plogging.warning('initial connection to %s failed, trying to setup winrm remotely',
-                             ip)
+                plogging.warning('initial connection to %s failed, trying to setup winrm remotely', host_address)
                 self._setup_winrm(host_address)
                 self._try_winrm(host_address)
 
@@ -209,6 +209,8 @@ class WindowsConfiguration(NodeConfiguration):
             if hostname is not None and isinstance(hostname, str):
                 cmds.append(('powershell.exe', ['Rename-Computer', '-NewName', hostname]))
 
+            cmds.append(('powershell.exe', ['Set-ExecutionPolicy', 'RemoteSigned']))
+
             extra_cmds = settings[self._element_name_].get('cmds', [])
             for command in extra_cmds:
                 command = PlumberyText.expand_string(command, environment)
@@ -216,6 +218,7 @@ class WindowsConfiguration(NodeConfiguration):
                 command_parts = command.split(' ')
                 cmds.append((command_parts[0], command_parts[1:]))
 
+            cmds.append(('shutdown.exe', ['-r']))
             out, err = self._winrm_commands(host_address, cmds)
             plogging.info(out)
             plogging.warning(err)

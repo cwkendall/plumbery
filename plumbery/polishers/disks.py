@@ -59,7 +59,7 @@ class DisksConfiguration(NodeConfiguration):
                          "or 'highperformance' or 'economy'")
         return True
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         if self._element_name_ in settings:
             for item in settings['disks']:
                 plogging.debug("- setting disk {}".format(item))

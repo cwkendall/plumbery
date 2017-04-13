@@ -41,7 +41,7 @@ class MonitoringConfiguration(NodeConfiguration):
                     "either 'essentials' or 'advanced'")
         return True
 
-    def configure(self, node, settings):
+    def configure(self, node, settings, environment):
         if self._element_name_ in settings:
             self._start_monitoring(node, settings[self._element_name_].upper())
             return True
