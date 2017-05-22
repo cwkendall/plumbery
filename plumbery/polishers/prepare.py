@@ -32,6 +32,8 @@ from plumbery.text import PlumberyText
 from plumbery.text import PlumberyNodeContext
 from plumbery.plogging import plogging
 
+from plumbery.polishers.poshclient import POSHClient
+
 
 class FileContentDeployment(Deployment):
     """
@@ -245,7 +247,18 @@ class PreparePolisher(PlumberyPolisher):
             target_ip = node.private_ips[0]
 
         # use libcloud to communicate with remote nodes
-        session = SSHClient(hostname=target_ip,
+
+	if node.extra['OS_type'] == "WINDOWS":
+            if self.user == "root":
+                self.user = "Administrator"
+            session = POSHClient(hostname=target_ip,
+                            port=445,
+                            username=self.user,
+                            password=self.secret,
+                            key_files=None,
+                            timeout=5000)
+        else:
+            session = SSHClient(hostname=target_ip,
                             port=22,
                             username=self.user,
                             password=self.secret,
@@ -255,6 +268,7 @@ class PreparePolisher(PlumberyPolisher):
         repeats = 0
         while True:
             try:
+                plogging.warning("- session connect attempt")
                 session.connect()
                 break
 
@@ -330,8 +344,9 @@ class PreparePolisher(PlumberyPolisher):
                                           context=self.facility)
 
         prepares = []
-
         for key_file in self.key_files:
+            if node.extra['OS_type'] == "WINDOWS":
+                break
             try:
                 path = os.path.expanduser(key_file)
 
@@ -365,7 +380,7 @@ class PreparePolisher(PlumberyPolisher):
                         args = tokens[2:]
                     else:
                         args = []
-
+                    args = [ PlumberyText.expand_string(a, environment) for a in args ]
                     plogging.debug("- {} {} {}".format(
                         tokens[0], script, ' '.join(args)))
 

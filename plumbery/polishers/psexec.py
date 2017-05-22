@@ -84,7 +84,7 @@ class PSEXEC:
         for protocol in self.__protocols:
             rpctransport = self.do_connect(addr, protocol)
             if rpctransport is not None:
-                self.doStuff(rpctransport)
+                return self.doStuff(rpctransport)
 
     def openPipe(self, s, tid, pipe, accessMask):
         pipeReady = False
@@ -105,6 +105,26 @@ class PSEXEC:
         fid = s.openFile(tid,pipe,accessMask, creationOption = 0x40, fileAttributes = 0x80)
 
         return fid
+
+    def get_protocols(self):
+        return self.__protocols
+
+    def get_client(self):
+        if self.stdin_pipe is None or self.stdin_pipe.shell is None:
+            raise Exception("No stdin pipe or shell")
+        if self.stdin_pipe.shell.transferClient is None:
+            self.stdin_pipe.shell.connect_transferClient()
+        return self.stdin_pipe.shell.transferClient
+
+    def get_shell(self):
+        if self.stdin_pipe is None or self.stdin_pipe.shell is None:
+            raise Exception("No stdin pipe or shell")
+        return self.stdin_pipe.shell
+
+    def get_share(self):
+        if self.stdin_pipe is None or self.stdin_pipe.shell is None:
+            raise Exception("No stdin pipe or shell")
+        return self.stdin_pipe.share
 
     def do_connect(self, addr, protocol, timeout=100000):
         protodef = PSEXEC.KNOWN_PROTOCOLS[protocol]
@@ -130,7 +150,7 @@ class PSEXEC:
             return rpctransport
         return rpctransport
 
-    def doStuff(self, rpctransport, timeout=100000):
+    def doStuff(self, rpctransport, stdin=None, stdout=None, stderr=None, timeout=100000):
         global dialect
         dialect = rpctransport.get_smb_connection().getDialect()
 
@@ -184,16 +204,21 @@ class PSEXEC:
             self.stdin_pipe = RemoteStdInPipe(rpctransport,
                                          '\%s%s%d' % (RemComSTDIN, packet['Machine'], packet['ProcessID']),
                                          smb.FILE_WRITE_DATA | smb.FILE_APPEND_DATA, installService.getShare())
+            if stdin is not None:
+                self.stdin_pipe.stdin = stdin
             self.stdin_pipe.start()
             self.stdout_pipe = RemoteStdOutPipe(rpctransport,
                                            '\%s%s%d' % (RemComSTDOUT, packet['Machine'], packet['ProcessID']),
                                            smb.FILE_READ_DATA)
+            if stdout is not None:
+                self.stdout_pipe.stdout = stdout
             self.stdout_pipe.start()
             self.stderr_pipe = RemoteStdErrPipe(rpctransport,
                                            '\%s%s%d' % (RemComSTDERR, packet['Machine'], packet['ProcessID']),
                                            smb.FILE_READ_DATA)
+            if stderr is not None:
+                self.stderr_pipe.stderr = stderr
             self.stderr_pipe.start()
-            self.shell = self.stdin_pipe.shell
             # And we stay here till the end
             ans = s.readNamedPipe(tid,fid_main,8)
 
@@ -303,8 +328,9 @@ class RemoteStdErrPipe(Pipes):
                     pass
 
 class RemoteShell(cmd.Cmd):
-    def __init__(self, server, port, credentials, tid, fid, share, transport):
-        cmd.Cmd.__init__(self, False)
+    def __init__(self, server, port, credentials, tid, fid, share, transport, stdin, stdout):
+        cmd.Cmd.__init__(self, None, stdin, stdout)
+        cmd.Cmd.use_rawinput = False
         self.prompt = '\x08'
         self.server = server
         self.transferClient = None
@@ -315,7 +341,8 @@ class RemoteShell(cmd.Cmd):
         self.port = port
         self.transport = transport
         self.intro = '[!] Press help for extra shell commands'
-        self.stdin = sys.stdin
+        self.stdin = stdin
+        self.stdout = stdout
 
     def connect_transferClient(self):
         #self.transferClient = SMBConnection('*SMBSERVER', self.server.getRemoteHost(), sess_port = self.port, preferredDialect = SMB_DIALECT)
@@ -396,7 +423,7 @@ class RemoteShell(cmd.Cmd):
         return
 
     def default(self, line):
-        self.send_data(line.decode(self.stdin.encoding).encode('cp437')+'\r\n')
+        self.send_data(line.decode(self.stdin.encoding).encode('cp437')+'\r\n', hideOutput=False)
 
     def send_data(self, data, hideOutput = True):
         if hideOutput is True:
@@ -407,13 +434,15 @@ class RemoteShell(cmd.Cmd):
         self.server.writeFile(self.tid, self.fid, data)
 
 class RemoteStdInPipe(Pipes):
-    def __init__(self, transport, pipe, permisssions, share=None):
-        self.shell = None
+    def __init__(self, transport, pipe, permisssions, share=None, stdin=sys.stdin, stdout=sys.stdout):
         Pipes.__init__(self, transport, pipe, permisssions, share)
+        self.shell = None
+        self.stdin = stdin
+        self.stdout = stdout
 
     def run(self):
         self.connectPipe()
-        self.shell = RemoteShell(self.server, self.port, self.credentials, self.tid, self.fid, self.share, self.transport)
+        self.shell = RemoteShell(self.server, self.port, self.credentials, self.tid, self.fid, self.share, self.transport, self.stdin, self.stdout)
         self.shell.cmdloop()
 
 # Process command-line arguments.

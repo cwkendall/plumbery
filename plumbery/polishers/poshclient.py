@@ -1,67 +1,110 @@
 
 
 from libcloud.compute.ssh import BaseSSHClient
-from impacket.examples.smbclient
+
+from threading import Thread
 
 from plumbery.polishers.psexec import PSEXEC
 from plumbery.plogging import plogging
 
 # this works for python 2.x only
 from StringIO import StringIO
+import io
+from time import sleep
+import os
+import string
+import cmd
 
 class PSExecWrapper(Thread):
-    def __init__(self, hostname, port, username, password, key, timeout):
+    def __init__(self, psexec, rpctransport):
         Thread.__init__(self)
-        self._rpctransport = None
-        self._hostname = hostname
-        self._timeout = timeout
-        self._psexec = PSEXEC(command='cmd.exe', path=None, fileName=None, c=None, None, username, password, domain='', hashes=None,
-                      aesKey=None, k=False, dc_ip=None)
-
-    def connect(self):
-        for protocol in self._psexec.__protocols:
-            self._rpctransport = self._psexec.do_connect(addr, protocol, 100000)
-        if self._rpctransport is None:
-            return False
-
+        self._psexec = psexec
+        self._rpctransport = rpctransport
+ 
     def run(self):
-        self._psexec.doStuff(self._rpctransport)
+        self.stdout = StringIO()
+        self.stderr = StringIO()
+        r,w = os.pipe()
+        self.stdin = io.open(w, "wt", 1000, "utf-8", "strict", '\r\n', True)
+        stdin_reader = io.open(r, "rt", 1000, "utf-8", "strict", '\r\n', True)
+        self._psexec.doStuff(self._rpctransport, stdin_reader, self.stdout, self.stderr)
 
-    def get_shell(self):
-        if not self.is_alive
+    def get_client(self):
+        if not self.is_alive:
             return None
-        if self._psexec.shell.transferClient is None:
-            self._psexec.shell.connect_transferClient()
-        return self._psexec.shell
+        plogging.warning("PSEXEC get client")
+        sleep(2)
+        client = self._psexec.get_client()
+        return client
 
-    def run_cmd(self, s, stdout=None, stderr=None):
+    def get_share(self):
+        plogging.warning("PSEXEC get share")
+        return self._psexec.get_share()
+
+    def run_cmd(self, s):
         if self._rpctransport is None:
             return False
         # check stdin is availble
-        if not self._psexec.shell.stdin.opened
-            return Flase
-        if stdout is not None:
-            self._psexec.stdout_pipe.stdout = stdout
-        if stderr is not None:
-            self._psexec.stderr_pipe.stderr = stderr
-        return cmd.Cmd.onecmd(self._psexec.shell, s)
+        if self.stdin.closed:
+            return False
+        plogging.warning("PSEXEC running: "+s)
+        #self.stdin.write(unicode(s+'\n'))
+        #status =1
+        self.stdin.flush()
+        if s.split(' ')[0].endswith('.ps1'):
+            s = "powershell " + s
+        status = self._psexec.get_shell().onecmd(unicode(s + '\r\n'))
+        self.stdin.flush()
+        sleep(2)
+        plogging.warning("PSEXEC out:\n"+self.stdout.getvalue()+" \n\nerr:\n"+self.stderr.getvalue())
+        return [self.stdout, self.stderr, status]
+
+    def close():
+        self.stdin.flush()
+        self.stdin.close()
+
+class POSHClient2(BaseSSHClient):
+    def __init__(self, hostname, port=445, username='Administrator', password=None, key_files=None, timeout=None):
+       pass
+    def connect(self):
+       pass
+    def put(self, path, contents=None, chmod=None, mode='w'):
+       pass
+    def run(self, cmd):
+       pass 
+    def close(self):
+       pass
 
 
 class POSHClient(BaseSSHClient):
     """
     A PowerShell Client powered by Impacket.
     """
-    def __init__(self, hostname, port=439, username='Administrator', password=None, key=None, timeout=None):
-        super(POSHClient, self).__init__(hostname, port, username, password, key, timeout)
-        self.ps = PSExecWrapper(hostname, port, username, password, key, timeout)
+    def __init__(self, hostname, port=445, username='Administrator', password=None, key_files=None, timeout=None):
+        super(POSHClient, self).__init__(hostname, port, username, password, key_files, timeout)
+        self._psexec = PSEXEC(command='cmd.exe', path='C:/Windows/', exeFile=None, copyFile=None, protocols=None, username=username, password=password, domain='', hashes=None,
+                      aesKey=None, doKerberos=False, kdcHost=None)
+        self._hostname = hostname
+        self._port = port
+        self._timeout = timeout
+        self.ps = None
+        #todo allow kerberos key to be used
 
 
     def connect(self):
-        try:
-            self.ps.connect() #blocks
-            self.ps.start()
-        except:
-            return False
+        plogging.warning("POSH Connecting to %s" % (self._hostname))
+        for protocol in self._psexec.get_protocols():
+            protodef = PSEXEC.KNOWN_PROTOCOLS[protocol]
+            port = protodef[1]
+            if port == self._port:
+                plogging.warning("PSEXEC Connecting to %s (%s)" % (self._hostname, protocol))
+                _rpctransport = self._psexec.do_connect(self._hostname, protocol, self._timeout)
+                if _rpctransport is None:
+                    raise Exception("RPC connection failed")
+                self.ps = PSExecWrapper(self._psexec, _rpctransport)
+                plogging.warning("POSH launching thread to %s" % (self._hostname))
+                self.ps.start()
+                return True
         #self.client = SMBConnection(self.hostname, self.hostname)
         #lmhash = ''
         #nthash = ''
@@ -78,9 +121,9 @@ class POSHClient(BaseSSHClient):
         #            'allow_agent': False,
         #            'look_for_keys': False}
         #self.client.connect(**conninfo)
-        return True
+        return False
 
-    def put(self, path, contents=None, chmod=None):
+    def put(self, path, contents=None, chmod=None, mode='w'):
         """
         Upload a file to the remote node.
         :type path: ``str``
@@ -94,7 +137,10 @@ class POSHClient(BaseSSHClient):
         :return: Full path to the location where a file has been saved.
         :rtype: ``str``
         """
-        shell = self.ps.get_shell()
+
+        #todo support mode 'a'='append' using transferClient.writeFile
+        client = self.ps.get_client()
+        share = self.ps.get_share()
 
         fh = StringIO(contents)
         f = path
@@ -102,8 +148,8 @@ class POSHClient(BaseSSHClient):
         src_file = os.path.basename(f)
         pathname = string.replace(f,'/','\\')
 
-        plogging.info("Uploading %s to %s\%s" % (src_file, shell.share, dst_path))
-        shell.transferClient.putFile(shell.share, pathname.decode(shell.stdin.encoding), fh.read)
+        plogging.info("Uploading %s to %s\%s" % (src_file, share, dst_path))
+        client.putFile(share, pathname, fh.read)
         fh.close()
         return pathname
 
@@ -116,23 +162,24 @@ class POSHClient(BaseSSHClient):
                  otherwise.
         :rtype: ``bool``
         """
-        shell = self.ps.get_shell()
+        client = self.ps.get_client()
+        share = self.ps.get_share()
 
         f = path
         pathname = string.replace(f,'/','\\')
-        plogging.info("Deleting file  %s\%s" % (shell.share, pathname))
-        return shell.transferClient.deleteFile(shell.share, pathname)
+        plogging.info("Deleting file  %s\%s" % (share, pathname))
+        return client.deleteFile(share, pathname)
 
     def run(self, cmd):
-        shell = self.ps.get_shell()
-        stdout = StringIO()
-        stderr = StringIO()
         # blocks while command completes
         plogging.info("Running command:  %s" % (cmd))
-
-        status = shell.run_cmd(cmd, stdout, stderr)
-        return [stdout, stderr, status]
+        return self.ps.run_cmd(cmd)
 
     def close(self):
         self.run("exit")
+        self.ps.close()
         self.ps.join()
+
+if __name__ == '__main__':
+    print ("hello from poshclient")
+
