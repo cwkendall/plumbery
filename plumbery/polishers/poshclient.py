@@ -52,7 +52,7 @@ class PSExecWrapper(Thread):
         #status =1
         self.stdin.flush()
         if s.split(' ')[0].endswith('.ps1'):
-            s = "powershell " + s
+            s = "%systemroot%\\sysnative\\windowspowershell\\v1.0\\powershell.exe " + s
         status = self._psexec.get_shell().onecmd(unicode(s + '\r\n'))
         self.stdin.flush()
         sleep(2)
